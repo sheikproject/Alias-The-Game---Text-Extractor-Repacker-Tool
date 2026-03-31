@@ -7,12 +7,8 @@ def log_message(msg):
     log_box.insert(tk.END, msg + "\n")
     log_box.see(tk.END)
 
-def align_to_16(f):
-    """Moves the file pointer to the next 16-byte boundary."""
-    current_pos = f.tell()
-    padding = (16 - (current_pos % 16)) % 16
-    if padding > 0:
-        f.seek(padding, 1)
+def get_align_padding(current_pos, alignment=16):
+    return (alignment - (current_pos % alignment)) % alignment
 
 def extract_surgical():
     filepath = filedialog.askopenfilename(title="Select .all file to extract")
@@ -20,19 +16,36 @@ def extract_surgical():
     
     try:
         with open(filepath, 'rb') as f:
+            magic = f.read(4)
+            f.seek(0)
+            
+            # Check for XPR0 (Xbox Resource) files - these are not text archives
+            if magic == b'XPR0':
+                log_message(f"Skipping {os.path.basename(filepath)}: This is an XPR0 Texture/Font container, not a text archive.")
+                messagebox.showwarning("Incompatible File", "This is an XPR0 resource file (Textures/Fonts).\n\nThis tool only supports Alias .ALL text/data archives.")
+                return
+
             main_header = f.read(16)
             file_count = struct.unpack('<I', main_header[:4])[0]
             
+            # Safety check for corrupted or non-standard .all files
+            if file_count > 5000 or file_count == 0:
+                log_message("Error: Invalid file count. This might not be a supported .all archive.")
+                return
+
             log_message(f"--- Extracting {file_count} files ---")
             
             file_entries = []
             for i in range(file_count):
                 entry_data = f.read(72)
+                if len(entry_data) < 72: break # Prevent buffer error
+                
                 name = entry_data[:64].split(b'\x00')[0].decode('ascii', errors='ignore')
                 size = struct.unpack('<Q', entry_data[64:72])[0]
                 file_entries.append({'name': name, 'size': size})
 
-            align_to_16(f)
+            # Skip header padding
+            f.seek(get_align_padding(f.tell()), 1)
 
             output_dir = filepath + "_extracted"
             os.makedirs(output_dir, exist_ok=True)
@@ -41,42 +54,47 @@ def extract_surgical():
                 if entry['size'] == 0: continue
                 
                 data = f.read(entry['size'])
-                # Move to next 16-byte boundary for the next file
-                align_to_16(f)
+                f.seek(get_align_padding(f.tell()), 1)
                 
                 out_path = os.path.join(output_dir, entry['name'])
                 
-                # Logic to detect and clean text files
-                if entry['name'].lower().endswith('.txt') and data.startswith(b'\xff\xfe'):
-                    data = data.rstrip(b'\x00')
-                    text_content = data.decode('utf-16le', errors='ignore')
+                is_text = False
+                bom_pos = -1
+                if entry['name'].lower().endswith('.txt'):
+                    bom_pos = data.find(b'\xff\xfe', 0, 128) # Larger scan for prototype buffers
+                    if bom_pos != -1:
+                        is_text = True
+                
+                if is_text:
+                    text_payload = data[bom_pos:].rstrip(b'\x00')
+                    text_content = text_payload.decode('utf-16le', errors='ignore')
                     with open(out_path, 'w', encoding='utf-8', newline='') as t_file:
                         t_file.write(text_content)
-                    log_message(f"Extracted: {entry['name']}")
+                    log_message(f"Extracted Text: {entry['name']}")
                 else:
                     with open(out_path, 'wb') as b_file:
                         b_file.write(data)
-                    log_message(f"Extracted (Binary): {entry['name']}")
+                    log_message(f"Extracted Binary: {entry['name']}")
 
-        messagebox.showinfo("Success", f"Extraction complete!\nFiles saved to: {output_dir}")
+        messagebox.showinfo("Success", "Extraction complete!")
         
     except Exception as e:
         log_message(f"Error: {e}")
 
 def repack_surgical():
-    original_filepath = filedialog.askopenfilename(title="1. Select ORIGINAL .all file")
+    original_filepath = filedialog.askopenfilename(title="Select ORIGINAL .all file")
     if not original_filepath: return
     
-    extracted_dir = filedialog.askdirectory(title="2. Select folder with edited files")
+    extracted_dir = filedialog.askdirectory(title="Select folder with edited files")
     if not extracted_dir: return
     
-    output_filepath = filedialog.asksaveasfilename(title="3. Save REPACKED file as...", defaultextension=".all")
+    output_filepath = filedialog.asksaveasfilename(title="Save REPACKED file as...", defaultextension=".all")
     if not output_filepath: return
 
     try:
         with open(original_filepath, 'rb') as f:
-            main_header = f.read(16)
-            file_count = struct.unpack('<I', main_header[:4])[0]
+            header_start = f.read(16)
+            file_count = struct.unpack('<I', header_start[:4])[0]
             filenames = []
             for _ in range(file_count):
                 name = f.read(64).split(b'\x00')[0].decode('ascii', errors='ignore')
@@ -91,38 +109,30 @@ def repack_surgical():
             if os.path.exists(file_path):
                 if name.lower().endswith('.txt'):
                     with open(file_path, 'r', encoding='utf-8', newline='') as t_file:
-                        text = t_file.read()
-                    
-                    text = text.lstrip('\ufeff') # Prevent Double BOM (ÿþÿþ)
+                        text = t_file.read().lstrip('\ufeff')
                     text = text.replace('\r\n', '\n').replace('\n', '\r\n')
                     encoded_data = b'\xff\xfe' + text.encode('utf-16le')
                 else:
                     with open(file_path, 'rb') as b_file:
                         encoded_data = b_file.read()
                 
-                # Apply 16-byte padding to the data itself
-                remainder = len(encoded_data) % 16
-                if remainder > 0:
-                    encoded_data += b'\x00' * (16 - remainder)
+                padding_size = get_align_padding(len(encoded_data))
+                encoded_data += b'\x00' * padding_size
                 
                 new_data_blocks.append(encoded_data)
                 new_sizes.append(len(encoded_data))
-                log_message(f"Packed: {name} ({len(encoded_data)} bytes)")
+                log_message(f"Packed: {name}")
             else:
                 new_data_blocks.append(b"")
                 new_sizes.append(0)
 
         with open(output_filepath, 'wb') as out:
-            out.write(main_header)
+            out.write(header_start)
             for i in range(file_count):
                 out.write(filenames[i].encode('ascii').ljust(64, b'\x00'))
                 out.write(struct.pack('<Q', new_sizes[i]))
             
-            # Align before writing the first data block
-            current_pos = out.tell()
-            padding = (16 - (current_pos % 16)) % 16
-            out.write(b'\x00' * padding)
-            
+            out.write(b'\x00' * get_align_padding(out.tell()))
             for block in new_data_blocks:
                 out.write(block)
 
@@ -131,28 +141,21 @@ def repack_surgical():
     except Exception as e:
         log_message(f"Error: {e}")
 
-# --- GUI Setup ---
+# --- GUI ---
 root = tk.Tk()
 root.title("Alias Text Tool")
-root.geometry("600x600")
+root.geometry("600x620")
 root.configure(bg="#f0f0f0")
 
-# Image Header Section
 img_path = "AliasTextTool_GUI.png"
 if os.path.exists(img_path):
     try:
         header_img = tk.PhotoImage(file=img_path)
-        img_label = tk.Label(root, image=header_img, bg="#f0f0f0")
-        img_label.pack(pady=10)
-    except Exception as e:
-        tk.Label(root, text=f"[Error loading image: {e}]", fg="red").pack()
-else:
-    # Placeholder if image is missing
-    tk.Label(root, text=f"Put '{img_path}' in this folder to see the header.", fg="gray").pack(pady=20)
+        tk.Label(root, image=header_img, bg="#f0f0f0").pack(pady=10)
+    except: pass
 
-# Buttons Section
-btn_frame = tk.Frame(root, pady=10, bg="#f0f0f0")
-btn_frame.pack()
+btn_frame = tk.Frame(root, bg="#f0f0f0")
+btn_frame.pack(pady=10)
 
 tk.Button(btn_frame, text="Extract .all File", command=extract_surgical, width=20, height=2, 
           bg="#3498db", fg="white", font=("Arial", 10, "bold")).grid(row=0, column=0, padx=15)
@@ -165,5 +168,4 @@ log_box = scrolledtext.ScrolledText(root, height=15, font=("Consolas", 9), bg="#
 log_box.pack(padx=20, pady=10, fill=tk.BOTH, expand=True)
 
 log_message("Note: Don't forget to have AliasTextTool_GUI.png in the same folder as this tool.")
-
 root.mainloop()
