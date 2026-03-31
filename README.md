@@ -3,7 +3,7 @@
 A python tool to extract and edit the text from the 2004 game Alias.
 
 # How To Extract the Text
-1. Select "Extract .all" option. (You can also use it to extract the files inside any .all file in the game)
+1. Select "Extract .all" option.
 2. Now you have to select the file that you want to get the text from, keep in my mind that only ingame text (aka the files normally named text.all or ltext.all)
 3. The extracted files are located in the folder YOURFILE.all_extracted, in the same folder as the file you selected.
 
