@@ -2,6 +2,15 @@
 
 A python tool to extract and edit the text from the 2004 game Alias.
 
+You can also use it to extract the files inside any ".all". 
+(Keep in mind that some of them in the Xbox/PC versions are actually .XPR files, mostly the ones that have textures or sprites for the HUD or the Main Menu.)
+
+# Supported Versions
+- PS2
+- XBOX
+- PC
+- Prototype versions
+
 # How To Extract the Text
 1. Select "Extract .all" option.
 2. Now you have to select the file that you want to get the text from, keep in my mind that only ingame text (aka the files normally named text.all or ltext.all)
