@@ -21,6 +21,7 @@ You can also use it to extract the files inside any ".all".
 2. First you have to select the ORIGINAL file you used to extract the text files.
 3. Now you select the extracted folder.
 4. And save your new .all file.
+
 NOTE: Keep in mind that it will probably have some issues, like some text strings missing or replaced with a "Missing Text ID" ingame.
 
 Made with the help of Google Gemini.
